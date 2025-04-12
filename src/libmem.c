@@ -81,8 +81,6 @@
      caller->mm->symrgtbl[rgid].rg_end = rgnode.rg_end;
   
      *alloc_addr = rgnode.rg_start;
-     
-     printf("alloc_addr = %d\n", *alloc_addr);
  
      pthread_mutex_unlock(&mmvm_lock);
      return 0;
