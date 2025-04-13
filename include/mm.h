@@ -88,13 +88,15 @@
 #define PAGING_PGN(x)  GETVAL(x,PAGING_PGN_MASK,PAGING_ADDR_PGN_LOBIT)
 /* Extract FramePHY Number*/
 #define PAGING_FPN(x)  GETVAL(x,PAGING_PTE_FPN_MASK,PAGING_PTE_FPN_LOBIT)
+/* Extract SWAPFPN */
+#define PAGING_PGN(x)  GETVAL(x,PAGING_PGN_MASK,PAGING_ADDR_PGN_LOBIT)
+/* Extract SWAPTYPE */
+#define PAGING_FPN(x)  GETVAL(x,PAGING_PTE_FPN_MASK,PAGING_PTE_FPN_LOBIT)
 
 /* Memory range operator */
 /* TODO implement the INCLUDE and OVERLAP checking mechanism */
-/* include: 1 includes 2: 1:[x1,x2], 2:[y1,y2]*/
-/* overlap: 1 and 2 overlap*/
-#define INCLUDE(x1,x2,y1,y2) (x1 <= y1 && x2 >= y2)
-#define OVERLAP(x1,x2,y1,y2) (x1 < y2 && x2 > y1)
+#define INCLUDE(x1,x2,y1,y2) ((y1 >= x1) && (y2 <= x2))
+#define OVERLAP(x1,x2,y1,y2) ((x1 <= y2 && y1 <= x2))
 
 /* VM region prototypes */
 struct vm_rg_struct * init_vm_rg(int rg_start, int rg_endi);
