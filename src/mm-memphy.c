@@ -149,7 +149,6 @@ int MEMPHY_get_freefp(struct memphy_struct *mp, int *retfpn)
 
    if (fp == NULL)
       return -1;
-
    *retfpn = fp->fpn;
    mp->free_fp_list = fp->fp_next;
 
