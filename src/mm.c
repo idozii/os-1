@@ -175,9 +175,7 @@
        if (find_victim_page(caller->mm, &vicpgn) == -1 || MEMPHY_get_freefp(caller->active_mswp, &swpfpn) == -1)
        {
          if (*frm_lst == NULL)
-         {
            return -1;
-         }
          else
          {
            struct framephy_struct *freefp_str;
@@ -440,5 +438,4 @@
    return 0;
  }
  
- // #endif
- 
+ // #endif 
