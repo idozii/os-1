@@ -31,16 +31,24 @@ int __sys_ni_syscall(struct pcb_t *caller, struct sc_regs *regs)
    /*
     * DUMMY systemcall
     */
-
+   printf("ERROR: Called non-implemented system call (nr=%d)\n", regs->orig_ax);
+   printf("Available system calls:\n");
+   
+   for(int i = 0; i < syscall_table_size; i++)
+      printf("%s\n", sys_call_table[i]);
+   
    return 0;
 }
 
 #define __SYSCALL(nr, sym) case nr: return __##sym(caller,regs);
 int syscall(struct pcb_t *caller, uint32_t nr, struct sc_regs* regs)
 {
+   regs->orig_ax = nr;
+   
 	switch (nr) {
 	#include "syscalltbl.lst"
 	default: return __sys_ni_syscall(caller, regs);
 	}
+   return 0;
 };
 

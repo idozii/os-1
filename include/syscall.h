@@ -31,7 +31,7 @@ struct sc_regs {
 
 
 /* This is used purely for kernel trace the table of system call */
-//typedef long (*sys_call_ptr_t)(const struct sc_regs *);
+typedef long (*sys_call_ptr_t)(const struct sc_regs *);
 extern const char* sys_call_table[];
 extern const int syscall_table_size;
 int syscall(struct pcb_t*, uint32_t, struct sc_regs*);
