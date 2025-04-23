@@ -130,7 +130,13 @@ The `killall` system call terminates all processes with a given name. Here's the
 ## sched input
 
 ```markdown
-Time: | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |10 |11 |12 |13 |14 |15 |16 |17 |18 |19 |20 | --------+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+ CPU 0 |s0 |s0 |s0 |s0 |s1 |s1 |s1 |s1 |s1 |s1 |s1 |s1 |s1 |s1 |s0 |s0 | | | | | | --------+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+ Process | s0 loading | s1 arrives | Process execution | Process completion | Status | s0 runs | s1 preempts | s1 runs multiple slots | s0 finishes | s1 done |
+Time:   | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |10 |11 |12 |13 |14 |15 |16 |17 |18 |19 |20 |
+--------+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+CPU 0   |P1 |P1 |P1 |P1 |   |P3 |P3 |P3 |P3 |   |P3 |P3 |P3 |P3 |   |P3 |   |   |   |   |   |
+CPU 1   |   |   |P2 |P2 |P2 |P2 |   |   |   |P2 |P2 |P2 |P2 |   |P1 |   |P1 |P1 |P1 |P1 |   |
+--------+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+Process  | Load processes |       Process execution cycle       |      Finishing execution     |
+Status   |P1|P2|P3|      |       P1, P2, P3 running            |    P3 ends    |    P1 ends   |
 ```
 
 ### Explanation 1
@@ -197,9 +203,9 @@ Status   |   s0 runs   |  s1 preempts   |   s1 runs multiple slots    | s0 finis
 ```markdown
 Time:   | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |10 |11 |12 |13 |14 |15 |16 |17 |18 |19 |20 |21 |22 |23 |24 |25 |26 |27 |28 |29 |30 |31 |32 |33 |34 |35 |36 |37 |38 |39 |40 |41 |42 |43 |44 |45 |46 |
 --------+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
-CPU 0   |s0 |s0 |s0 |s0 |s1 |s1 |s1 |s1 |s3 |s3 |s4 |s4 |s2 |s2 |s3 |s3 |s4 |s4 |s2 |s2 |s3 |s3 |s4 |s4 |s2 |s2 |s3 |s3 |s4 |s4 |s3 |s3 |s4 |s4 |s3 |s3 |s0 |s0 |s0 |s0 |s0 |s0 |s0 |s0 |s0 |s0 |
+CPU 0   |s0 |s0 |s0 |s0 |s1 |s1 |s1 |s1 |s3 |s3 |s1 |s1 |s2 |s2 |s3 |s3 |s1 |s1 |s2 |s2 |s3 |s3 |s1 |s1 |s2 |s2 |s3 |s3 |s1 |s1 |s3 |s3 |s1 |s1 |s3 |s3 |s0 |s0 |s0 |s0 |s0 |s0 |s0 |s0 |s0 |s0 |
 --------+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
-Process  | s0  |   s1 arrives  |  s2,s3 arrive  |      Round-robin between priority 0 processes     |  s2 finishes  |  s3 finishes  |  s4 finishes  | s0 completes |
+Process  | s0  |   s1 arrives  |  s2,s3 arrive  |      Round-robin between priority 0 processes     |  s2 finishes  |  s1 finishes  |  s3 finishes  | s0 completes |
 Status   |s0,p4|   s1,p0       |s1,s2,s3 all p0 |            s1,s2,s3 executing                     |               |               |               |              |
 ```
 
