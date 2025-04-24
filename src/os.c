@@ -102,42 +102,51 @@ static void * cpu_routine(void * args) {
 
 static void * ld_routine(void * args) {
 #ifdef MM_PAGING
-	struct memphy_struct* mram = ((struct mmpaging_ld_args *)args)->mram;
-	struct memphy_struct** mswp = ((struct mmpaging_ld_args *)args)->mswp;
-	struct memphy_struct* active_mswp = ((struct mmpaging_ld_args *)args)->active_mswp;
-	struct timer_id_t * timer_id = ((struct mmpaging_ld_args *)args)->timer_id;
+    struct memphy_struct* mram = ((struct mmpaging_ld_args *)args)->mram;
+    struct memphy_struct** mswp = ((struct mmpaging_ld_args *)args)->mswp;
+    struct memphy_struct* active_mswp = ((struct mmpaging_ld_args *)args)->active_mswp;
+    struct timer_id_t * timer_id = ((struct mmpaging_ld_args *)args)->timer_id;
 #else
-	struct timer_id_t * timer_id = (struct timer_id_t*)args;
+    struct timer_id_t * timer_id = (struct timer_id_t*)args;
 #endif
-	int i = 0;
-	printf("ld_routine\n");
-	while (i < num_processes) {
-		struct pcb_t * proc = load(ld_processes.path[i]);
+    int i = 0;
+    printf("ld_routine\n");
+    while (i < num_processes) {
+        struct pcb_t * proc = load(ld_processes.path[i]);
 #ifdef MLQ_SCHED
-		proc->prio = ld_processes.prio[i];
+        proc->prio = ld_processes.prio[i];
 #endif
-		while (current_time() < ld_processes.start_time[i]) {
-			next_slot(timer_id);
-		}
+        while (current_time() < ld_processes.start_time[i]) {
+            next_slot(timer_id);
+        }
 #ifdef MM_PAGING
-		proc->mm = malloc(sizeof(struct mm_struct));
-		init_mm(proc->mm, proc);
-		proc->mram = mram;
-		proc->mswp = mswp;
-		proc->active_mswp = active_mswp;
+        proc->mm = malloc(sizeof(struct mm_struct));
+        init_mm(proc->mm, proc);
+        proc->mram = mram;
+        proc->mswp = mswp;
+        proc->active_mswp = active_mswp;
 #endif
-		printf("\tLoaded a process at %s, PID: %d PRIO: %ld\n",
-			ld_processes.path[i], proc->pid, ld_processes.prio[i]);
-		add_proc(proc);
-		free(ld_processes.path[i]);
-		i++;
-		next_slot(timer_id);
-	}
-	free(ld_processes.path);
-	free(ld_processes.start_time);
-	done = 1;
-	detach_event(timer_id);
-	pthread_exit(NULL);
+        printf("\tLoaded a process at %s, PID: %d%s%lu\n",
+            ld_processes.path[i], proc->pid, 
+#ifdef MLQ_SCHED
+            " PRIO: ", ld_processes.prio[i]
+#else
+            "", 0
+#endif
+        );
+        add_proc(proc);
+        free(ld_processes.path[i]);
+        i++;
+        next_slot(timer_id);
+    }
+    free(ld_processes.path);
+    free(ld_processes.start_time);
+#ifdef MLQ_SCHED
+    free(ld_processes.prio);
+#endif
+    done = 1;
+    detach_event(timer_id);
+    pthread_exit(NULL);
 }
 
 static void read_config(const char * path) {
@@ -147,13 +156,11 @@ static void read_config(const char * path) {
         exit(1);
     }
     
-    // Read basic configuration parameters
     if (fscanf(file, "%d %d %d", &time_slot, &num_cpus, &num_processes) != 3) {
         printf("Error reading configuration parameters\n");
         exit(1);
     }
     
-    // Consume the newline after first line
     int c;
     while ((c = fgetc(file)) != EOF && c != '\n');
     
@@ -170,45 +177,42 @@ static void read_config(const char * path) {
     for(sit = 1; sit < PAGING_MAX_MMSWP; sit++)
         memswpsz[sit] = 0;
 #else
-    /* Try to detect if the file has memory configuration */
+    /* Read memory configuration if present */
     char peek_line[256];
     long file_pos = ftell(file);
     
     if (fgets(peek_line, sizeof(peek_line), file) == NULL) {
-        printf("Error reading memory configuration line\n");
+        printf("Error reading next line\n");
         exit(1);
     }
     
-    /* Check if this line looks like process info or memory config */
+    /* Check if this line has memory config (no letters) */
     int is_mem_config = 1;
-    char *p = peek_line;
-    while (*p) {
-        /* If we find a letter, this is likely not memory config */
+    for (char *p = peek_line; *p; p++) {
         if ((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z')) {
             is_mem_config = 0;
             break;
         }
-        p++;
     }
     
     if (is_mem_config) {
         /* Parse memory configuration */
-        char *token = strtok(peek_line, " \t\n");
-        if (token != NULL) {
-            memramsz = atoi(token);
-            
-            for (sit = 0; sit < PAGING_MAX_MMSWP; sit++) {
-                token = strtok(NULL, " \t\n");
-                if (token != NULL) {
-                    memswpsz[sit] = atoi(token);
-                } else {
-                    /* Not enough swap sizes provided */
-                    memswpsz[sit] = 0;
-                }
-            }
-        } else {
-            printf("Error parsing memory RAM size\n");
+        if (sscanf(peek_line, "%d", &memramsz) != 1) {
+            printf("Error parsing RAM size\n");
             exit(1);
+        }
+        
+        char *pos = peek_line;
+        while (*pos && *pos != ' ') pos++; // Skip first number
+        
+        for (sit = 0; sit < PAGING_MAX_MMSWP; sit++) {
+            while (*pos && *pos == ' ') pos++; // Skip spaces
+            if (*pos) {
+                memswpsz[sit] = atoi(pos);
+                while (*pos && *pos != ' ') pos++; // Skip number
+            } else {
+                memswpsz[sit] = 0;
+            }
         }
     } else {
         /* No memory config, use fixed sizes */
@@ -226,7 +230,6 @@ static void read_config(const char * path) {
         malloc(sizeof(unsigned long) * num_processes);
 #endif
 
-    // Read process information
     int i;
     for (i = 0; i < num_processes; i++) {
         ld_processes.path[i] = (char*)malloc(sizeof(char) * 100);
@@ -234,45 +237,40 @@ static void read_config(const char * path) {
         strcat(ld_processes.path[i], "input/proc/");
         
         char proc[100];
-        memset(proc, 0, sizeof(proc));
-        
-        // Read and parse the process information
         char line[256];
+        
         if (fgets(line, sizeof(line), file) == NULL) {
-            printf("Error reading line for process %d\n", i);
+            printf("Error reading process %d information\n", i);
             exit(1);
         }
         
-        // Strip newline if present
+        // Remove newline if present
         size_t len = strlen(line);
         if (len > 0 && line[len-1] == '\n') {
             line[len-1] = '\0';
         }
         
 #ifdef MLQ_SCHED
-        // Parse process info with priority
         if (sscanf(line, "%lu %s %lu", 
-                   &ld_processes.start_time[i], proc, &ld_processes.prio[i]) != 3) {
-            printf("Error parsing process %d info: '%s'\n", i, line);
+                &ld_processes.start_time[i], proc, &ld_processes.prio[i]) != 3) {
+            printf("Error parsing process %d info\n", i);
             exit(1);
         }
 #else
-        // Parse process info without priority
         if (sscanf(line, "%lu %s", &ld_processes.start_time[i], proc) != 2) {
-            printf("Error parsing process %d info: '%s'\n", i, line);
+            printf("Error parsing process %d info\n", i);
             exit(1);
         }
 #endif
-        // Create the full path
         strcat(ld_processes.path[i], proc);
         
         // Debug output
-        printf("Process %d: start=%lu, name=%s", 
-               i, ld_processes.start_time[i], proc);
+        printf("Process %d: start=%lu, path=%s", 
+            i, ld_processes.start_time[i], ld_processes.path[i]);
 #ifdef MLQ_SCHED
         printf(", priority=%lu", ld_processes.prio[i]);
 #endif
-        printf(", path=%s\n", ld_processes.path[i]);
+        printf("\n");
     }
     
     fclose(file);
