@@ -1,17 +1,243 @@
 
-# Scheduling Mechanism
+# Scheduler
 
-- Use Multi-level queue Scheduling and Round Robin.
+## Scheduler Design
 
-- Process Priority: Processes with higher priority(lower numerical value) are schedule first.
+- **Multi-level Queue Scheduling and Round Robin**
+  - Processes are organized in multiple ready queues based on their priority
+  - Within each priority level, round-robin scheduling is implemented
 
-- Time Slots: Each priority level has allocated slots based on the equation slot[i]=MAX_PRIO-i.
+- **Process Priority**
+  - Processes with higher priority (lower numerical value) are scheduled first
+  - This ensures critical operations receive CPU time before less important ones
 
-- CPU Availability: Multiple CPUS can run processes concurrently.
+- **Time Slot Allocation**
+  - Each priority level has allocated slots based on the equation: `slot[i] = MAX_PRIO - i`
+  - Higher priority processes (lower i) receive more consecutive time slots
+  - This prevents starvation while still prioritizing important processes
 
-## Timing of Operations
+- **Multi-CPU Support**
+  - Multiple CPUs can run processes concurrently
+  - Improves overall system throughput and responsiveness
+  - Allows parallel execution of processes from different priority levels
 
-- Sometimes, deallocation happens first because memory operations displayed in the order they occur, even if they're from different proceses.
+## Implementation
+
+- enqueue:
+
+```C
+void enqueue(struct queue_t *queue, struct pcb_t *proc) {
+    // Verify valid queue and process
+    if (queue == NULL || proc == NULL) return;
+    
+    // Check if queue is full
+    if (queue->size == MAX_QUEUE_SIZE) {
+        return;
+    }
+    
+    // Add process to the end of the queue
+    queue->proc[queue->size] = proc;
+    queue->size++;
+}
+```
+
+- dequeue:
+
+```C
+// Remove and return first process from queue
+struct pcb_t* dequeue(struct queue_t *queue) {
+    if (queue == NULL || queue->size == 0) {
+        return NULL;
+    }
+    
+    struct pcb_t* proc = queue->proc[0];
+    
+    // Shift remaining processes forward
+    for (int i = 0; i < queue->size - 1; i++) {
+        queue->proc[i] = queue->proc[i + 1];
+    }
+    
+    queue->size--;
+    return proc;
+}
+
+// Check if queue is empty
+int empty(struct queue_t *queue) {
+    return (queue == NULL || queue->size == 0);
+}
+```
+
+- get_mlq_proc:
+
+```C
+struct pcb_t * get_mlq_proc(void) {
+    struct pcb_t * proc = NULL;
+    pthread_mutex_lock(&queue_lock);
+    
+    // Iterate through priority levels
+    for (i = 0; i < MAX_PRIO; ++i) {
+        // Skip if queue is empty or no slots available
+        if (empty(&mlq_ready_queue[i]) || slot[i] == 0) {
+            // Reset slots when depleted
+            slot[i] = MAX_PRIO - i;
+            continue;
+        }
+        // Get process from this priority level
+        proc = dequeue(&mlq_ready_queue[i]);
+        slot[i]--;  // Decrement available slots
+        break;
+    }
+    
+    pthread_mutex_unlock(&queue_lock);
+    return proc;
+}
+```
+
+## Testing
+
+### sched input
+
+```markdown
+| Parameter            | Value     | Description                               |
+|----------------------|-----------|-------------------------------------------|
+| Time slice           | 4         | Each process executes for 4 time units    |
+| Number of CPUs       | 2         | Two processors running in parallel        |
+| Number of processes  | 3         | Total processes to be scheduled           |
+
+| Process Information  |           |            |                               |
+|----------------------|-----------|------------|-------------------------------|
+| **Start Time**       | **Name**  | **Priority** | **Notes**                   |
+| 0                    | p1s       | 1          | Medium priority, starts first |
+| 1                    | p2s       | 0          | High priority, arrives second |
+| 2                    | p3s       | 0          | High priority, arrives last   |
+```
+
+#### Gantt chart 1
+
+```markdown
+Time:   | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |10 |11 |12 |13 |14 |15 |16 |17 |18 |19 |20 |
+--------+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+CPU 0   |P1 |P1 |P1 |P1 |   |P3 |P3 |P3 |P3 |   |P3 |P3 |P3 |P3 |   |P3 |   |   |   |   |   |
+CPU 1   |   |   |P2 |P2 |P2 |P2 |   |   |   |P2 |P2 |P2 |P2 |   |P1 |   |P1 |P1 |P1 |P1 |   |
+--------+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+         ⌞────────────⌟    ⌞────────────────────────────────────⌟    ⌞─────────────────────⌟
+         Load phase         Execution phase                           Completion phase
+```
+
+#### Explanation 1
+
+- **Time 0-2:**
+  - P1 starts on CPU0, P2 arrives.
+
+- **Time 2-4:**
+  - P3 arrives, P2 gets CPU1 (higher priority).
+
+- **Time 4-8:**
+  - P1 completes time slice, P3 starts on CPU0.
+
+- **Time 8-14:**
+  - Round-robin continues with P2 on CPU1, P3 on CPU0.
+
+- **Time 14-16:**
+  - P1 returns to CPU1 after P2 completes its slots.
+
+- **Time 16-20:**
+  - P3 finishes on CPU0, P1 completes on CPU1.
+
+### sched_0 input
+
+```markdown
+| Parameter            | Value     | Description                               |
+|----------------------|-----------|-------------------------------------------|
+| Time slice           | 2         | Each process executes for 2 time units    |
+| Number of CPUs       | 1         | Single processor system                   |
+| Number of processes  | 2         | Total processes to be scheduled           |
+
+| Process Information  |           |            |                               |
+|----------------------|-----------|------------|-------------------------------|
+| **Start Time**       | **Name**  | **Priority** | **Notes**                   |
+| 0                    | s0        | 4          | Lowest priority, starts first |
+| 4                    | s1        | 0          | High priority, arrives second |
+```
+
+#### Gantt chart 2
+
+```markdown
+Time:   | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |10 |11 |12 |13 |14 |15 |16 |
+--------+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+CPU 0   |s0 |s0 |s0 |s0 |s1 |s1 |s1 |s1 |s1 |s1 |s1 |s1 |s1 |s1 |s0 |s0 |   |
+--------+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+         ⌞────────⌟  ⌞────────────────────────────────⌟  ⌞─────⌟
+         s0 starts    s1 preempts (higher priority)      Completion
+```
+
+#### Explanation 2
+
+- **Time 0-4:**
+  - Low priority process s0 starts execution.
+
+- **Time 4:**
+  - High priority process s1 arrives and preempts s0.
+
+- **Time 4-14:**
+  - s1 executes for full allocation (5 slots x 2 units).
+
+- **Time 14-16:**
+  - s0 returns to finish remaining execution.
+
+- **Time 16:**
+  - All processes have completed execution.
+
+### sched_1 input
+
+```markdown
+| Parameter            | Value     | Description                               |
+|----------------------|-----------|-------------------------------------------|
+| Time slice           | 2         | Each process executes for 2 time units    |
+| Number of CPUs       | 1         | Single processor system                   |
+| Number of processes  | 4         | Total processes to be scheduled           |
+
+| Process Information  |           |            |                               |
+|----------------------|-----------|------------|-------------------------------|
+| **Start Time**       | **Name**  | **Priority** | **Notes**                   |
+| 0                    | s0        | 4          | Lowest priority, starts first |
+| 4                    | s1        | 0          | Highest priority, arrives 2nd |
+| 6                    | s2        | 0          | Highest priority, arrives 3rd |
+| 7                    | s3        | 0          | Highest priority, arrives 4th |
+```
+
+#### Gantt chart 3
+
+```markdown
+Time:    0    5   10   15   20   25   30   35   40   45   
+       ┌────┬────┬────┬────┬────┬────┬────┬────┬────┬────┐
+CPU 0  │s0  │s1  │    Round-robin between    │    s0     │
+       │    │    │    s1, s2, and s3 (p0)    │completes  │
+       └────┴────┴────────────────────────────┴──────────┘
+         ↑    ↑    ↑                 ↑         ↑
+         │    │    │                 │         └─ Low priority s0 returns
+         │    │    │                 └─ s1,s2,s3 finish (time ~35)
+         │    │    └─ Round-robin begins among priority 0 processes
+         │    └─ s1 preempts s0 (higher priority)
+         └─ s0 starts (low priority)
+```
+
+#### Explanation 3
+
+- **Time 0-4:**
+  - s0 (priority 4) starts execution.
+
+- **Time 4-8:**
+  - s1 (priority 0) arrives and preempts s0.
+
+- **Time 6-8:**
+  - s2 and s3 (priority 0) both arrive.
+
+- **Time 8-35:**
+  - All priority 0 processes execute in rotation.
+
+- **Time 36-46:**
+  - Low priority s0 returns and finishes.
 
 # Paging-based Memory Management
 
@@ -117,7 +343,7 @@ Swapping is a memory management technique that allows the operating system to ha
 
 ### How it works
 
-1. **Basic Principle**: 
+1. **Basic Principle**:
    - When physical RAM is insufficient, less frequently used memory pages are temporarily moved to secondary storage (swap space)
    - This frees up RAM for more urgent processes or data
    - Pages can be swapped back into RAM when needed again
@@ -272,98 +498,3 @@ The `killall` system call terminates all processes with a given name. Here's the
                                                           │processes      │
                                                           └───────────────┘
 ```
-
-# Gantt Chart
-
-## sched input
-
-```markdown
-Time:   | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |10 |11 |12 |13 |14 |15 |16 |17 |18 |19 |20 |
---------+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
-CPU 0   |P1 |P1 |P1 |P1 |   |P3 |P3 |P3 |P3 |   |P3 |P3 |P3 |P3 |   |P3 |   |   |   |   |   |
-CPU 1   |   |   |P2 |P2 |P2 |P2 |   |   |   |P2 |P2 |P2 |P2 |   |P1 |   |P1 |P1 |P1 |P1 |   |
---------+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
-         ⌞────────────⌟    ⌞────────────────────────────────────⌟    ⌞─────────────────────⌟
-         Load phase         Execution phase                           Completion phase
-```
-
-### Explanation 1
-
-- **Time 0-2:**
-  - P1 starts on CPU0, P2 arrives.
-
-- **Time 2-4:**
-  - P3 arrives, P2 gets CPU1 (higher priority).
-
-- **Time 4-8:**
-  - P1 completes time slice, P3 starts on CPU0.
-
-- **Time 8-14:**
-  - Round-robin continues with P2 on CPU1, P3 on CPU0.
-
-- **Time 14-16:**
-  - P1 returns to CPU1 after P2 completes its slots.
-
-- **Time 16-20:**
-  - P3 finishes on CPU0, P1 completes on CPU1.
-
-## sched_0 input
-
-```markdown
-Time:   | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |10 |11 |12 |13 |14 |15 |16 |
---------+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
-CPU 0   |s0 |s0 |s0 |s0 |s1 |s1 |s1 |s1 |s1 |s1 |s1 |s1 |s1 |s1 |s0 |s0 |   |
---------+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
-         ⌞────────⌟  ⌞────────────────────────────────⌟  ⌞─────⌟
-         s0 starts    s1 preempts (higher priority)      Completion
-```
-
-### Explanation 2
-
-- **Time 0-4:**
-  - Low priority process s0 starts execution.
-
-- **Time 4:**
-  - High priority process s1 arrives and preempts s0.
-
-- **Time 4-14:**
-  - s1 executes for full allocation (5 slots x 2 units).
-
-- **Time 14-16:**
-  - s0 returns to finish remaining execution.
-
-- **Time 16:**
-  - All processes have completed execution.
-
-## sched_1 input
-
-```markdown
-Time:    0    5   10   15   20   25   30   35   40   45   
-       ┌────┬────┬────┬────┬────┬────┬────┬────┬────┬────┐
-CPU 0  │s0  │s1  │    Round-robin between    │    s0     │
-       │    │    │    s1, s2, and s3 (p0)    │completes  │
-       └────┴────┴────────────────────────────┴──────────┘
-         ↑    ↑    ↑                 ↑         ↑
-         │    │    │                 │         └─ Low priority s0 returns
-         │    │    │                 └─ s1,s2,s3 finish (time ~35)
-         │    │    └─ Round-robin begins among priority 0 processes
-         │    └─ s1 preempts s0 (higher priority)
-         └─ s0 starts (low priority)
-```
-
-### Explanation 3
-
-- **Time 0-4:**
-  - s0 (priority 4) starts execution.
-
-- **Time 4-8:**
-  - s1 (priority 0) arrives and preempts s0.
-
-- **Time 6-8:**
-  - s2 and s3 (priority 0) both arrive.
-
-- **Time 8-35:**
-  - All priority 0 processes execute in rotation.
-
-- **Time 36-46:**
-  - Low priority s0 returns and finishes.
