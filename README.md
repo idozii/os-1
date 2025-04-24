@@ -102,6 +102,19 @@ int pg_setval(struct mm_struct *mm, int addr, BYTE value, struct pcb_t *caller)
 
 Swapping is a memory management technique that allows the operating system to handle situations where the physical RAM is insufficient to hold all the processes that need to be executed. This critical function enables multitasking and efficient memory utilization in operating systems.
 
+```markdown
+┌────────────────┐     ┌────────────────┐     ┌────────────────┐
+│  Page Fault    │     │ Victim Page    │     │ Get Swap Frame │
+│  Detection     │────▶│ Selection      │────▶│                │
+└────────────────┘     └────────────────┘     └────────┬───────┘
+                                                       │
+                                                       ▼
+┌────────────────┐     ┌────────────────┐     ┌────────────────┐
+│ FIFO Queue     │     │ Page Table     │     │ Data Transfer  │
+│ Management     │◀────│ Updates        │◀────│                │
+└────────────────┘     └────────────────┘     └────────────────┘
+```
+
 ### How it works
 
 1. **Basic Principle**: 
