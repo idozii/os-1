@@ -169,7 +169,22 @@ regs.a3 = SYSMEM_SWP_OP; // Operation code for swapping
 syscall(caller, 17, &regs);
 ```
 
+### Handling Edge Cases
 
+#### Swap Space Unavailability
+
+- The implementation includes a check for swap space availability
+- If swap space is not configured or is full, the system:
+  1. Directly reuses a physical frame without swapping to disk
+  2. Marks the victim page as not present
+  3. Updates the page table entries accordingly
+
+#### Multiple Process Memory Demands
+
+- When multiple processes compete for limited RAM:
+  1. Each process gets its own virtual address space
+  2. Physical frames are shared among all processes
+  3. Swapping ensures fair allocation based on usage patterns
 
 # System Call: `killall`
 
@@ -178,32 +193,53 @@ syscall(caller, 17, &regs);
 The `killall` system call terminates all processes with a given name. Here's the flow:
 
 ```plaintext
-┌───────────────────────────────┐
-│ 1. Read process name from mem │
-└───────────────┬───────────────┘
-                │
-                ▼
-┌───────────────────────────────┐
-│ 2. Search running processes   │◄───────┐
-└───────────────┬───────────────┘        │
-                │                         │
-                ▼                         │
-┌───────────────────────────────┐        │
-│ 3. Search ready queues        │        │
-└───────────────┬───────────────┘        │
-                │                         │
-                ▼                         │
-┌───────────────────────────────┐        │
-│ 4. For each matching process: │        │
-│    - Remove from queue        │────────┘
-│    - Free resources           │
-│    - Increment counter        │
-└───────────────┬───────────────┘
-                │
-                ▼
-┌───────────────────────────────┐
-│ 5. Return terminated count    │
-└───────────────────────────────┘
+   🕒 Time progression →
+┌─────────┬─────────┬─────────┬─────────┬─────────┬─────────┬─────────┐
+│    t0   │    t1   │    t2   │    t3   │    t4   │    t5   │    t6   │
+├─────────┼─────────┼─────────┼─────────┼─────────┼─────────┼─────────┤
+│Initialize│  Read   │ Search  │ Search  │ Remove  │  Free   │ Return  │
+│ killall()│ process │ running │ ready   │processes│resources │  count  │
+│parameters│  name   │processes│ queues  │         │         │         │
+└─────┬────┴────┬────┴────┬────┴────┬────┴────┬────┴────┬────┴────┬────┘
+      │         │         │         │         │         │         │
+      ▼         │         │         │         │         │         │
+┌──────────┐    │         │         │         │         │         │
+│  __sys_  │    │         │         │         │         │         │
+│ killall()│    │         │         │         │         │         │
+└─────┬────┘    │         │         │         │         │         │
+      │         │         │         │         │         │         │
+      ▼         │         │         │         │         │         │
+┌──────────┐    │         │         │         │         │         │
+│ libread() │────▶        │         │         │         │         │
+│(get name) │             │         │         │         │         │
+└───────────┘             │         │         │         │         │
+                          │         │         │         │         │
+                          ▼         │         │         │         │
+                     ┌──────────────┐         │         │         │
+                     │Check running │─────────▶         │         │
+                     │ process list │                   │         │
+                     └──────────────┘                   │         │
+                                              │         │         │
+                                              ▼         │         │
+                                        ┌──────────┐    │         │
+                                        │  Check   │────▶         │
+                                        │all queues│              │
+                                        └──────────┘              │
+                                                                  │
+                                                                  ▼
+                                                          ┌───────────────┐
+                                                          │For each match:│
+                                                          │• Remove       │
+                                                          │• Free mem     │
+                                                          │• Count++      │
+                                                          └───────┬───────┘
+                                                                  │
+                                                                  ▼
+                                                          ┌───────────────┐
+                                                          │Return number  │
+                                                          │of terminated  │
+                                                          │processes      │
+                                                          └───────────────┘
 ```
 
 # Gantt Chart
@@ -216,111 +252,87 @@ Time:   | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |10 |11 |12 |13 |14 |15 |16 |17 
 CPU 0   |P1 |P1 |P1 |P1 |   |P3 |P3 |P3 |P3 |   |P3 |P3 |P3 |P3 |   |P3 |   |   |   |   |   |
 CPU 1   |   |   |P2 |P2 |P2 |P2 |   |   |   |P2 |P2 |P2 |P2 |   |P1 |   |P1 |P1 |P1 |P1 |   |
 --------+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
-Process  | Load processes |       Process execution cycle       |      Finishing execution     |
-Status   |P1|P2|P3|      |       P1, P2, P3 running            |    P3 ends    |    P1 ends   |
+         ⌞────────────⌟    ⌞────────────────────────────────────⌟    ⌞─────────────────────⌟
+         Load phase         Execution phase                           Completion phase
 ```
 
 ### Explanation 1
 
-- **Start (Time 0-2):**
-  - Time 0: Process p1s (priority 1) arrives and starts on CPU 0
-  - Time 1: Process p2s (priority 0) arrives
-  - Time 2: Process p3s (priority 0) arrives and p2s (higher priority) starts on CPU 1
+- **Time 0-2:**
+  - P1 starts on CPU0, P2 arrives.
 
-- **First Execution Cycle (Time 0-7):**
-  - P1 runs on CPU 0 for its time slice (4 units)
-  - P2 runs on CPU 1 for its time slice (4 units)
-  - After P1 completes its time slice, P3 starts on CPU 0
+- **Time 2-4:**
+  - P3 arrives, P2 gets CPU1 (higher priority).
 
-- **Second Execution Cycle (Time 8-15):**
-  - P3 continues on CPU 0
-  - P2 returns to CPU 1 for another time slice
-  - P3 completes another time slice on CPU 0
-  - P1 returns to CPU 1 after P2 completes its slots
+- **Time 4-8:**
+  - P1 completes time slice, P3 starts on CPU0.
 
-- **Completion (Time 15-20):**
-  - P3 finishes execution on CPU 0 (time ~15)
-  - P1 completes execution on CPU 1 (time ~20)
-  - P2 completes execution (before P1)
+- **Time 8-14:**
+  - Round-robin continues with P2 on CPU1, P3 on CPU0.
+
+- **Time 14-16:**
+  - P1 returns to CPU1 after P2 completes its slots.
+
+- **Time 16-20:**
+  - P3 finishes on CPU0, P1 completes on CPU1.
 
 ## sched_0 input
 
 ```markdown
-Time:   | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |10 |11 |12 |13 |14 |15 |16 |17 |18 |19 |20 |
---------+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
-CPU 0   |s0 |s0 |s0 |s0 |s1 |s1 |s1 |s1 |s1 |s1 |s1 |s1 |s1 |s1 |s0 |s0 |   |   |   |   |   |
---------+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
-Process  | s0 loading  |   s1 arrives   |      Process execution      |    Process completion |
-Status   |   s0 runs   |  s1 preempts   |   s1 runs multiple slots    | s0 finishes | s1 done |
+Time:   | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |10 |11 |12 |13 |14 |15 |16 |
+--------+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+CPU 0   |s0 |s0 |s0 |s0 |s1 |s1 |s1 |s1 |s1 |s1 |s1 |s1 |s1 |s1 |s0 |s0 |   |
+--------+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+         ⌞────────⌟  ⌞────────────────────────────────⌟  ⌞─────⌟
+         s0 starts    s1 preempts (higher priority)      Completion
 ```
 
 ### Explanation 2
 
-- **Initial Phase (Time 0-4):**
-  - Time 0: Process s0 (priority 4) arrives and starts execution
-  - s0 runs for its first 2 time slices (time 0-2)
-  - s0 continues for another 2 time slices (time 2-4)
+- **Time 0-4:**
+  - Low priority process s0 starts execution.
 
-- **s1 Preemption (Time 4):**
-  - Time 4: Process s1 (priority 0) arrives
-  - s1 preempts s0 because it has higher priority
+- **Time 4:**
+  - High priority process s1 arrives and preempts s0.
 
-- **s1 Execution (Time 4-14):**
-  - s1 executes for its full allocation (priority 0 gets 5 slots)
-  - Each slot is 2 time units, so s1 runs for 10 time units (5 slots)
-  - During this time, s0 waits in its priority queue
+- **Time 4-14:**
+  - s1 executes for full allocation (5 slots x 2 units).
 
-- **s0 Completion (Time 14-16):**
-  - After s1 completes its slots, s0 returns to finish execution
-  - s0 runs for its remaining 2 time units (1 slot)
-  - s0 completes at time 16
+- **Time 14-16:**
+  - s0 returns to finish remaining execution.
 
-- **All Processes Complete (Time 16):**
-  - All processes have completed execution
-  - CPU becomes idle
+- **Time 16:**
+  - All processes have completed execution.
 
 ## sched_1 input
 
 ```markdown
-Time:   | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |10 |11 |12 |13 |14 |15 |16 |17 |18 |19 |20 |21 |22 |23 |24 |25 |26 |27 |28 |29 |30 |31 |32 |33 |34 |35 |36 |37 |38 |39 |40 |41 |42 |43 |44 |45 |46 |
---------+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
-CPU 0   |s0 |s0 |s0 |s0 |s1 |s1 |s1 |s1 |s3 |s3 |s1 |s1 |s2 |s2 |s3 |s3 |s1 |s1 |s2 |s2 |s3 |s3 |s1 |s1 |s2 |s2 |s3 |s3 |s1 |s1 |s3 |s3 |s1 |s1 |s3 |s3 |s0 |s0 |s0 |s0 |s0 |s0 |s0 |s0 |s0 |s0 |
---------+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
-Process  | s0  |   s1 arrives  |  s2,s3 arrive  |      Round-robin between priority 0 processes     |  s2 finishes  |  s1 finishes  |  s3 finishes  | s0 completes |
-Status   |s0,p4|   s1,p0       |s1,s2,s3 all p0 |            s1,s2,s3 executing                     |               |               |               |              |
+Time:    0    5   10   15   20   25   30   35   40   45   
+       ┌────┬────┬────┬────┬────┬────┬────┬────┬────┬────┐
+CPU 0  │s0  │s1  │    Round-robin between    │    s0     │
+       │    │    │    s1, s2, and s3 (p0)    │completes  │
+       └────┴────┴────────────────────────────┴──────────┘
+         ↑    ↑    ↑                 ↑         ↑
+         │    │    │                 │         └─ Low priority s0 returns
+         │    │    │                 └─ s1,s2,s3 finish (time ~35)
+         │    │    └─ Round-robin begins among priority 0 processes
+         │    └─ s1 preempts s0 (higher priority)
+         └─ s0 starts (low priority)
 ```
 
 ### Explanation 3
 
-- **Initial Phase (Time 0-4):**
-  - Time 0: Process s0 (priority 4) arrives and starts execution
-  - s0 runs for its first 2 time slices (time 0-2)
-  - s0 continues for another 2 time slices (time 2-4)
+- **Time 0-4:**
+  - s0 (priority 4) starts execution.
 
-- **First High Priority Process (Time 4-7):**
-  - Time 4: Process s1 (priority 0) arrives
-  - s1 preempts s0 because it has higher priority
-  - s1 runs for 2 time units (time 4-6)
-  - Time 6: Process s2 (priority 0) arrives
+- **Time 4-8:**
+  - s1 (priority 0) arrives and preempts s0.
 
-- **Multiple High Priority Processes (Time 6-10):**
-  - s1 continues for its second time slice (time 6-8)
-  - Time 7: Process s3 (priority 0) arrives
-  - After s1's time slice, s2 gets CPU (time 8-10)
+- **Time 6-8:**
+  - s2 and s3 (priority 0) both arrive.
 
-- **Round-Robin Among Priority 0 (Time 10-24):**
-  - The three priority 0 processes (s1, s2, s3) execute in round-robin order
-  - Each gets 2 time units before being put back in the queue
-  - The rotation continues: s3 → s1 → s2 → s3 → s1 → s2...
+- **Time 8-35:**
+  - All priority 0 processes execute in rotation.
 
-- **Process Completion (Time 24-35):**
-  - Time 24: s1 completes execution
-  - Round-robin continues between s2 and s3
-  - Time 34: s2 completes execution
-  - Time 35: s3 completes execution
-
-- **Low Priority Completion (Time 36-46):**
-  - s0 (priority 4) returns to CPU
-  - s0 runs for its remaining 10 time units
-  - Time 46: s0 completes execution
-  - All processes have finished
+- **Time 36-46:**
+  - Low priority s0 returns and finishes.
