@@ -141,57 +141,141 @@ static void * ld_routine(void * args) {
 }
 
 static void read_config(const char * path) {
-	FILE * file;
-	if ((file = fopen(path, "r")) == NULL) {
-		printf("Cannot find configure file at %s\n", path);
-		exit(1);
-	}
-	fscanf(file, "%d %d %d\n", &time_slot, &num_cpus, &num_processes);
-	ld_processes.path = (char**)malloc(sizeof(char*) * num_processes);
-	ld_processes.start_time = (unsigned long*)
-		malloc(sizeof(unsigned long) * num_processes);
+    FILE * file;
+    if ((file = fopen(path, "r")) == NULL) {
+        printf("Cannot find configure file at %s\n", path);
+        exit(1);
+    }
+    
+    // Read basic configuration parameters
+    if (fscanf(file, "%d %d %d", &time_slot, &num_cpus, &num_processes) != 3) {
+        printf("Error reading configuration parameters\n");
+        exit(1);
+    }
+    
+    // Consume the newline after first line
+    int c;
+    while ((c = fgetc(file)) != EOF && c != '\n');
+    
+    ld_processes.path = (char**)malloc(sizeof(char*) * num_processes);
+    ld_processes.start_time = (unsigned long*)
+        malloc(sizeof(unsigned long) * num_processes);
+        
 #ifdef MM_PAGING
-	int sit;
+    int sit;
 #ifdef MM_FIXED_MEMSZ
-	/* We provide here a back compatible with legacy OS simulatiom config file
-         * In which, it have no addition config line for Mema, keep only one line
-	 * for legacy info 
-         *  [time slice] [N = Number of CPU] [M = Number of Processes to be run]
-         */
+    /* Use fixed memory sizes for backward compatibility */
+    memramsz    =  0x100000;
+    memswpsz[0] = 0x1000000;
+    for(sit = 1; sit < PAGING_MAX_MMSWP; sit++)
+        memswpsz[sit] = 0;
+#else
+    /* Try to detect if the file has memory configuration */
+    char peek_line[256];
+    long file_pos = ftell(file);
+    
+    if (fgets(peek_line, sizeof(peek_line), file) == NULL) {
+        printf("Error reading memory configuration line\n");
+        exit(1);
+    }
+    
+    /* Check if this line looks like process info or memory config */
+    int is_mem_config = 1;
+    char *p = peek_line;
+    while (*p) {
+        /* If we find a letter, this is likely not memory config */
+        if ((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z')) {
+            is_mem_config = 0;
+            break;
+        }
+        p++;
+    }
+    
+    if (is_mem_config) {
+        /* Parse memory configuration */
+        char *token = strtok(peek_line, " \t\n");
+        if (token != NULL) {
+            memramsz = atoi(token);
+            
+            for (sit = 0; sit < PAGING_MAX_MMSWP; sit++) {
+                token = strtok(NULL, " \t\n");
+                if (token != NULL) {
+                    memswpsz[sit] = atoi(token);
+                } else {
+                    /* Not enough swap sizes provided */
+                    memswpsz[sit] = 0;
+                }
+            }
+        } else {
+            printf("Error parsing memory RAM size\n");
+            exit(1);
+        }
+    } else {
+        /* No memory config, use fixed sizes */
+        fseek(file, file_pos, SEEK_SET); // Go back to start of line
         memramsz    =  0x100000;
         memswpsz[0] = 0x1000000;
-	for(sit = 1; sit < PAGING_MAX_MMSWP; sit++)
-		memswpsz[sit] = 0;
-#else
-	/* Read input config of memory size: MEMRAM and upto 4 MEMSWP (mem swap)
-	 * Format: (size=0 result non-used memswap, must have RAM and at least 1 SWAP)
-	 *        MEM_RAM_SZ MEM_SWP0_SZ MEM_SWP1_SZ MEM_SWP2_SZ MEM_SWP3_SZ
-	*/
-	fscanf(file, "%d\n", &memramsz);
-	for(sit = 0; sit < PAGING_MAX_MMSWP; sit++)
-		fscanf(file, "%d", &(memswpsz[sit])); 
-
-       fscanf(file, "\n"); /* Final character */
+        for(sit = 1; sit < PAGING_MAX_MMSWP; sit++)
+            memswpsz[sit] = 0;
+    }
 #endif
 #endif
 
 #ifdef MLQ_SCHED
-	ld_processes.prio = (unsigned long*)
-		malloc(sizeof(unsigned long) * num_processes);
+    ld_processes.prio = (unsigned long*)
+        malloc(sizeof(unsigned long) * num_processes);
 #endif
-	int i;
-	for (i = 0; i < num_processes; i++) {
-		ld_processes.path[i] = (char*)malloc(sizeof(char) * 100);
-		ld_processes.path[i][0] = '\0';
-		strcat(ld_processes.path[i], "input/proc/");
-		char proc[100];
+
+    // Read process information
+    int i;
+    for (i = 0; i < num_processes; i++) {
+        ld_processes.path[i] = (char*)malloc(sizeof(char) * 100);
+        ld_processes.path[i][0] = '\0';
+        strcat(ld_processes.path[i], "input/proc/");
+        
+        char proc[100];
+        memset(proc, 0, sizeof(proc));
+        
+        // Read and parse the process information
+        char line[256];
+        if (fgets(line, sizeof(line), file) == NULL) {
+            printf("Error reading line for process %d\n", i);
+            exit(1);
+        }
+        
+        // Strip newline if present
+        size_t len = strlen(line);
+        if (len > 0 && line[len-1] == '\n') {
+            line[len-1] = '\0';
+        }
+        
 #ifdef MLQ_SCHED
-		fscanf(file, "%lu %s %lu\n", &ld_processes.start_time[i], proc, &ld_processes.prio[i]);
+        // Parse process info with priority
+        if (sscanf(line, "%lu %s %lu", 
+                   &ld_processes.start_time[i], proc, &ld_processes.prio[i]) != 3) {
+            printf("Error parsing process %d info: '%s'\n", i, line);
+            exit(1);
+        }
 #else
-		fscanf(file, "%lu %s\n", &ld_processes.start_time[i], proc);
+        // Parse process info without priority
+        if (sscanf(line, "%lu %s", &ld_processes.start_time[i], proc) != 2) {
+            printf("Error parsing process %d info: '%s'\n", i, line);
+            exit(1);
+        }
 #endif
-		strcat(ld_processes.path[i], proc);
-	}
+        // Create the full path
+        strcat(ld_processes.path[i], proc);
+        
+        // Debug output
+        printf("Process %d: start=%lu, name=%s", 
+               i, ld_processes.start_time[i], proc);
+#ifdef MLQ_SCHED
+        printf(", priority=%lu", ld_processes.prio[i]);
+#endif
+        printf(", path=%s\n", ld_processes.path[i]);
+    }
+    
+    fclose(file);
 }
 
 int main(int argc, char * argv[]) {

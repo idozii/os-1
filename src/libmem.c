@@ -57,6 +57,11 @@
         struct vm_rg_struct *prev = curr;
         struct vm_rg_struct *next = curr->rg_next;
         while (next) {
+            if (curr->rg_end - curr->rg_start < 256) {
+                prev = next;
+                next = next->rg_next;
+              continue; // No overlap, move to the next region
+            }
             // If curr and next overlap or are adjacent, merge them
             if (!(curr->rg_end < next->rg_start || curr->rg_start > next->rg_end)) {
                 if (next->rg_start < curr->rg_start)
@@ -73,14 +78,6 @@
             }
         }
         curr = curr->rg_next;
-    }
-
-    // Print the starts and ends of each region
-    struct vm_rg_struct *printg = mm->mmap->vm_freerg_list;
-    while (printg != NULL)
-    {
-        printf("Free region: start=%d, end=%d\n", printg->rg_start, printg->rg_end);
-        printg = printg->rg_next;
     }
     return 0;
 }
@@ -118,7 +115,7 @@
   struct vm_rg_struct *rgit = cur_vma->vm_freerg_list;
   
   while (rgit != NULL) {
-    if (rgit->rg_end > rgit->rg_start) {
+    if (rgit->rg_end - rgit->rg_start >= 256) {
       total_free_size += (rgit->rg_end - rgit->rg_start);
     }
     rgit = rgit->rg_next;
@@ -136,21 +133,13 @@
   }
 
   /* Only increase by the amount actually needed */
-  int needed_increase = size - total_free_size;
-  if (needed_increase <= 0) {
-    needed_increase = PAGING_PAGE_ALIGNSZ(256); // Minimum page size if something went wrong
+  int inc_sz = size - total_free_size;
+  if (inc_sz <= 0) {
+    inc_sz = PAGING_PAGE_ALIGNSZ(256); // Minimum page size if something went wrong
   } else {
-    needed_increase = PAGING_PAGE_ALIGNSZ(needed_increase);
+    inc_sz = PAGING_PAGE_ALIGNSZ(inc_sz);
   }
 
-  /* If possible, decrement the size to achieve efficient inc_limit */
-  int inc_limit = cur_vma->vm_end - cur_vma->vm_start;
-  printf("cur_vma->vm_start = %d\n", cur_vma->vm_start);
-  printf("cur_vma->vm_end = %d\n", cur_vma->vm_end);
-  printf("inc_limit = %d\n", inc_limit);
-
-  int inc_sz = needed_increase; // Use only the additional space needed
-  
   /* Retrieve old_sbrk */
   int old_sbrk = cur_vma->sbrk;
 
@@ -172,9 +161,6 @@
   caller->mm->symrgtbl[rgid].rg_start = old_sbrk;
   caller->mm->symrgtbl[rgid].rg_end = old_sbrk + size;
   *alloc_addr = old_sbrk;
-
-  printf("old_brk + size = %d\n", old_sbrk + size);
-  printf("old_sbrk = %d\n", old_sbrk);
 
   /* Handle remaining free space */
   struct vm_area_struct *remain_rg = get_vma_by_num(caller->mm, vmaid);
@@ -627,6 +613,7 @@
    //  ..
    while (rgit != NULL)
    {
+    printf("Free region: %d - %d\n", rgit->rg_start, rgit->rg_end);
      if (rgit->rg_start + size <= rgit->rg_end)
      { /* Current region has enough space */
        newrg->rg_start = rgit->rg_start;

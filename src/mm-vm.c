@@ -157,16 +157,8 @@
    inc_rg->rg_start = old_end;
    inc_rg->rg_end = cur_vma->vm_end;
    inc_rg->rg_next = NULL;
-   enlist_vm_freerg_list(caller->mm, inc_rg); 
- 
-   /* Print the free regions */
-   struct vm_rg_struct *rgit = cur_vma->vm_freerg_list;
-   while (rgit != NULL)
-   {
-     printf("rgit->rg_start = %d\n", rgit->rg_start);
-     printf("rgit->rg_end = %d\n", rgit->rg_end);
-     rgit = rgit->rg_next;
-   }
+   enlist_vm_freerg_list(caller->mm, inc_rg);
+   
    if (vm_map_ram(caller, area->rg_start, area->rg_end,
                   old_end, incnumpage, newrg) < 0)
    {
