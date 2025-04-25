@@ -465,60 +465,105 @@ syscall(caller, 17, &regs);
     2. Physical frames are shared among all processes
     3. Swapping ensures fair allocation based on usage patterns
 
-# System Call
+# SYSCALL
 
-## System Call: `killall`
+## 1. System Call Table (syscall.c)
 
-## Process Termination Flow
+- \*\*Definition  
+  The `sys_call_table` is an array of strings that maps system call numbers (`nr`) to their corresponding names (`sym`). It is populated using the `syscalltbl.lst` file.
+
+- **Non-Implemented System Call Handler**:  
+  The function `__sys_ni_syscall` is invoked when a system call number does not match any implemented system call. It logs an error and lists all available system calls.
+
+- **System Call Dispatcher**:  
+  The `syscall` function is the entry point for handling system calls. It:
+    - Sets the `orig_ax` register to the system call number.
+    - Uses a `switch` statement to invoke the appropriate system call handler based on the number (`nr`).
+    - Falls back to `__sys_ni_syscall` if the number is invalid
+
+#### 2. **Listing System Calls (`sys_listsyscall.c`)**
+
+- **Purpose**:  
+  The `__sys_listsyscall` function allows a process to list all available system calls. It iterates through the `sys_call_table` and prints each entry.
+
+- **Implementation**:
+    ```c
+    int __sys_listsyscall(struct pcb_t *caller, struct sc_regs* reg) {
+        for (int i = 0; i < syscall_table_size; i++)
+            printf("%s\n", sys_call_table[i]);
+        return 0;
+    }
+    ```
+
+## 3. Kill All Processes: `killall`
+
+- **Purpose**:  
+  The `__sys_killall` function terminates all processes with a specified name. It traverses the running and ready queues, matches processes by name, and removes them.
+
+- **Key Features**:
+
+    - **Process Name Retrieval**:  
+      Reads the target process name from memory using `libread`.
+    - **Queue Traversal**:  
+      Iterates through the `running_list` and `ready_queue` (or `mlq_ready_queue` for multi-level queue scheduling) to find matching processes.
+    - **Process Termination**:  
+      Removes matching processes from the queues and frees their resources.
+
+- **Implementation Highlights**:
+
+    - Handles both single and multi-level queue schedulers.
+    - Logs the termination of each process and the total count of terminated processes.
+
+- Process Termination Flow:
 
 The `killall` system call terminates all processes with a given name. Here's the flow:
 
 ```markdown
 🕒 Time progression →
 ┌─────────┬─────────┬─────────┬─────────┬─────────┬─────────┬─────────┐
-│ t0 │ t1 │ t2 │ t3 │ t4 │ t5 │ t6 │
+│ t0      │ t1      │ t2      │ t3      │ t4      │ t5      │ t6      │
 ├─────────┼─────────┼─────────┼─────────┼─────────┼─────────┼─────────┤
-│Initialize│ Read │ Search │ Search │ Remove │ Free │ Return │
-│ killall()│ process │ running │ ready │processes│resources │ count │
-│parameters│ name │processes│ queues │ │ │ │
-└─────┬────┴────┬────┴────┬────┴────┬────┴────┬────┴────┬────┴────┬────┘
-│ │ │ │ │ │ │
-▼ │ │ │ │ │ │
-┌──────────┐ │ │ │ │ │ │
-│ \__sys_ │ │ │ │ │ │ │
-│ killall()│ │ │ │ │ │ │
-└─────┬────┘ │ │ │ │ │ │
-│ │ │ │ │ │ │
-▼ │ │ │ │ │ │
-┌──────────┐ │ │ │ │ │ │
-│ libread() │────▶ │ │ │ │ │
-│(get name) │ │ │ │ │ │
-└───────────┘ │ │ │ │ │
-│ │ │ │ │
-▼ │ │ │ │
-┌──────────────┐ │ │ │
-│Check running │─────────▶ │ │
-│ process list │ │ │
-└──────────────┘ │ │
-│ │ │
-▼ │ │
-┌──────────┐ │ │
-│ Check │────▶ │
-│all queues│ │
-└──────────┘ │
-│
-▼
-┌───────────────┐
-│For each match:│
-│• Remove │
-│• Free mem │
-│• Count++ │
-└───────┬───────┘
-│
-▼
-┌───────────────┐
-│Return number │
-│of terminated │
-│processes │
-└───────────────┘
+│Initialize│ Read    │ Search  │ Search  │ Remove  │ Free    │ Return │
+│ killall()│ process │ running │ ready   │processes│resources│ count  │
+│parameters│ name    │processes│ queues  │         │         │        │
+└─────┬────┴────┬────┴────┬────┴────┬────┴────┬────┴────┬────┴────┬───┘
+      │         │         │         │         │         │         │
+      ▼         │         │         │         │         │         │
+┌──────────┐    │         │         │         │         │         │
+│ \__sys_  │    │         │         │         │         │         │
+│ killall()│    │         │         │         │         │         │
+└─────┬────┘    │         │         │         │         │         │
+      │         │         │         │         │         │         │
+      ▼         │         │         │         │         │         │
+┌──────────┐    │         │         │         │         │         │
+│ libread() │────▶        │         │         │         │         │
+│(get name) │             │         │         │         │         │
+└───────────┘             │         │         │         │         │
+                          │         │         │         │         │
+                          ▼         │         │         │         │
+                ┌──────────────┐    │         │         │         │
+                │Check running │────▶         │         │         │
+                │ process list │              │         │         │
+                └──────────────┘              │         │         │
+                                              │         │         │
+                                              ▼         │         │
+                                    ┌──────────┐        │         │
+                                    │ Check    │────▶   │         │
+                                    │all queues│        │         │
+                                    └──────────┘        │         │
+                                                        │         │
+                                                        ▼         │
+                                            ┌───────────────┐     │
+                                            │For each match:│     │
+                                            │• Remove       │     │
+                                            │• Free mem     │     │
+                                            │• Count++      │     │
+                                            └───────┬───────┘     │
+                                                    │             │
+                                                    ▼             │
+                                            ┌───────────────┐     │
+                                            │Return number  │     │
+                                            │of terminated  │     │
+                                            │processes      │     │
+                                            └───────────────┘     │
 ```
