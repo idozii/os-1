@@ -1,4 +1,0 @@
-Time,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20
-CPU 0,P1,P1,P1,P1,,P3,P3,P3,P3,,P3,P3,P3,P3,,P3,,,,,
-CPU 1,,,P2,P2,P2,P2,,,,P2,P2,P2,P2,,P1,,P1,P1,P1,P1,
-Process Status,Load processes,Load processes,Load processes,,,Process execution,Process execution,Process execution,Process execution,Process execution,Process execution,Process execution,Process execution,Process execution,Finishing execution,Finishing execution,Finishing execution,Finishing execution,Finishing execution,Finishing execution,
