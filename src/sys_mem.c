@@ -27,13 +27,16 @@ int __sys_memmap(struct pcb_t *caller, struct sc_regs* regs)
             inc_vma_limit(caller, regs->a2, regs->a3);
             break;
    case SYSMEM_SWP_OP:
+            printf("Swap page %d with %d\n", regs->a2, regs->a3);
             __mm_swap_page(caller, regs->a2, regs->a3);
             break;
    case SYSMEM_IO_READ:
+            printf("Read from memphy %d\n", regs->a2);
             MEMPHY_read(caller->mram, regs->a2, &value);
             regs->a3 = value;
             break;
    case SYSMEM_IO_WRITE:
+            printf("Write to memphy %d\n", regs->a2);
             MEMPHY_write(caller->mram, regs->a2, regs->a3);
             break;
    default:
@@ -42,6 +45,4 @@ int __sys_memmap(struct pcb_t *caller, struct sc_regs* regs)
    }
    
    return 0;
-}
-
-
+} 

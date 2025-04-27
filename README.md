@@ -4,28 +4,53 @@
 
 - **Multi-level Queue Scheduling and Round Robin**
 
-    - Processes are organized in multiple ready queues based on their priority
-    - Within each priority level, round-robin scheduling is implemented
+-Processes are organized in multiple ready queues based on their priority
+-Within each priority level, round-robin scheduling is implemented
 
 - **Process Priority**
 
-    - Processes with higher priority (lower numerical value) are scheduled first
-    - This ensures critical operations receive CPU time before less important ones
+-Processes with higher priority (lower numerical value) are scheduled first
+-This ensures critical operations receive CPU time before less important ones
 
 - **Time Slot Allocation**
 
-    - Each priority level has allocated slots based on the equation: `slot[i] = MAX_PRIO - i`
-    - Higher priority processes (lower i) receive more consecutive time slots
-    - This prevents starvation while still prioritizing important processes
+-Each priority level has allocated slots based on the equation: `slot[i] = MAX_PRIO - i`
+-Higher priority processes (lower i) receive more consecutive time slots
+-This prevents starvation while still prioritizing important processes
 
 - **Multi-CPU Support**
-    - Multiple CPUs can run processes concurrently
-    - Improves overall system throughput and responsiveness
-    - Allows parallel execution of processes from different priority levels
+
+-Multiple CPUs can run processes concurrently
+-Improves overall system throughput and responsiveness
+-Allows parallel execution of processes from different priority levels
+
+- **Dual Priority Mechanism**
+
+- Each process has a default priority in its description file
+- This priority can be overwritten by the configuration specified in the input file
+- When a conflict exists, the input configuration priority takes precedence
+- This provides flexibility in process management without modifying process files
 
 ## Implementation
 
-- enqueue:
+### Dual Mechanism
+
+```C
+// In loader.c - Default priority assignment
+#ifdef MLQ_SCHED
+proc->prio = DEFAULT_PRIO;
+#endif
+
+// In os.c - Priority override during loading
+struct pcb_t *proc = load(ld_processes.path[i]);
+#ifdef MLQ_SCHED
+proc->prio = ld_processes.prio[i];  // Override with configuration priority
+#endif
+```
+
+### Priority queue
+
+- enqueue():
 
 ```C
 void enqueue(struct queue_t *queue, struct pcb_t *proc) {
@@ -43,7 +68,7 @@ void enqueue(struct queue_t *queue, struct pcb_t *proc) {
 }
 ```
 
-- dequeue:
+- dequeue():
 
 ```C
 // Remove and return first process from queue
@@ -53,7 +78,7 @@ struct pcb_t* dequeue(struct queue_t *queue) {
     }
 
     struct pcb_t* proc = queue->proc[0];
-
+#ifdef MLQ_SCHED
     // Shift remaining processes forward
     for (int i = 0; i < queue->size - 1; i++) {
         queue->proc[i] = queue->proc[i + 1];
@@ -61,35 +86,38 @@ struct pcb_t* dequeue(struct queue_t *queue) {
 
     queue->size--;
     return proc;
-}
-
-// Check if queue is empty
-int empty(struct queue_t *queue) {
-    return (queue == NULL || queue->size == 0);
+#else 
+    ...
+#endif
 }
 ```
 
-- get_mlq_proc:
+### Schedule
+
+- get_mlq_proc():
 
 ```C
 struct pcb_t * get_mlq_proc(void) {
     struct pcb_t * proc = NULL;
     pthread_mutex_lock(&queue_lock);
-
-    // Iterate through priority levels
+    int i;
+    
+    // Core MLQ scheduling algorithm
     for (i = 0; i < MAX_PRIO; ++i) {
-        // Skip if queue is empty or no slots available
+        // Skip empty queues or those that used up their slots
         if (empty(&mlq_ready_queue[i]) || slot[i] == 0) {
-            // Reset slots when depleted
+            // Reset slot count when depleted
             slot[i] = MAX_PRIO - i;
             continue;
         }
+        
         // Get process from this priority level
         proc = dequeue(&mlq_ready_queue[i]);
-        slot[i]--;  // Decrement available slots
+        // Decrement remaining slots for this priority
+        slot[i]--;
         break;
     }
-
+    
     pthread_mutex_unlock(&queue_lock);
     return proc;
 }
@@ -117,39 +145,43 @@ struct pcb_t * get_mlq_proc(void) {
 #### Gantt chart 1
 
 ```markdown
-Time: | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |10 |11 |12 |13 |14 |15 |16 |17 |18 |19 |20 |
---------+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
-CPU 0 |P1 |P1 |P1 |P1 | |P3 |P3 |P3 |P3 | |P3 |P3 |P3 |P3 | |P3 | | | | | |
-CPU 1 | | |P2 |P2 |P2 |P2 | | | |P2 |P2 |P2 |P2 | |P1 | |P1 |P1 |P1 |P1 | |
---------+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
-⌞────────────⌟ ⌞────────────────────────────────────⌟ ⌞─────────────────────⌟
-Load phase Execution phase Completion phase
+Time: | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |10 |11 |12 |13 |14 |15 |16 |17 |18 |19 |
+--------+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+CPU 0 |   |   |P2 |P2 |P2 |P2 |P2 |P2 |P2 |P2 |P2 |P2 |P2 |P1 |P1 |P1 |P1 |P1 |P1 |   |
+CPU 1 |   |P1 |P1 |P1 |P1 |P3 |P3 |P3 |P3 |P3 |P3 |P3 |P3 |P3 |P3 |P3 |   |   |   |   |
+--------+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+        ⌞────────────⌟⌞────────────────────────────────────────⌟⌞─────────────────⌟
+         Load phase           Execution phase               Completion phase
 ```
 
 #### Explanation 1
 
-- **Time 0-2:**
+- **Time 0-2: Load Phase**
+  - Time 0: System initializes, P1 (priority 1) is loaded
+  - Time 1: CPU 1 dispatches P1, P2 (priority 0) is loaded
+  - Time 2: CPU 0 dispatches P2, P3 (priority 0) is loaded
 
-    - P1 starts on CPU0, P2 arrives.
+- **Time 3-12: Execution Phase Part 1**
+  - Time 5:
+    - P1 completes its time slice on CPU 1 and returns to queue
+    - P3 (priority 0) is dispatched on CPU 1
+    - P2 (priority 0) is redispatched on CPU 0 after its time slice
+  - Time 8:
+    - P3 completes its time slice on CPU 1 and returns to queue
+    - P3 is redispatched on CPU 1 (round-robin among priority 0)
+    - P2 is redispatched on CPU 0 after another time slice
 
-- **Time 2-4:**
+- **Time 13-16: Execution Phase Part 2**
+  - Time 13:
+    - P2 finishes execution completely on CPU 0
+    - P1 (priority 1) is dispatched on CPU 0
+    - P3 continues execution on CPU 1
+  - Time 16: P3 finishes execution completely on CPU 1, CPU 1 stops
 
-    - P3 arrives, P2 gets CPU1 (higher priority).
-
-- **Time 4-8:**
-
-    - P1 completes time slice, P3 starts on CPU0.
-
-- **Time 8-14:**
-
-    - Round-robin continues with P2 on CPU1, P3 on CPU0.
-
-- **Time 14-16:**
-
-    - P1 returns to CPU1 after P2 completes its slots.
-
-- **Time 16-20:**
-    - P3 finishes on CPU0, P1 completes on CPU1.
+- **Time 17-19: Completion Phase**
+  - Time 17: P1 completes another time slice on CPU 0, returns to queue
+  - Time 17-19: P1 is redispatched and completes execution
+  - Time 19: All processes complete, CPU 0 stops
 
 ### sched_0 input
 
@@ -170,34 +202,32 @@ Load phase Execution phase Completion phase
 #### Gantt chart 2
 
 ```markdown
-Time: | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |10 |11 |12 |13 |14 |15 |16 |
---------+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
-CPU 0 |s0 |s0 |s0 |s0 |s1 |s1 |s1 |s1 |s1 |s1 |s1 |s1 |s1 |s1 |s0 |s0 | |
---------+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
-⌞────────⌟ ⌞────────────────────────────────⌟ ⌞─────⌟
-s0 starts s1 preempts (higher priority) Completion
+Time: | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |10 |11 |12 |13 |14 |15 |16 |17 |18 |19 |20 |21 |22 |23 |
+--------+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+CPU 0 |   |s0 |s0 |s0 |   |s1 |s1 |s1 |s1 |s1 |s1 |s1 |s0 |s0 |s0 |s0 |s0 |s0 |s0 |s0 |s0 |s0 |s0 |s0 |
+--------+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+⌞────────⌟ ⌞─────────────────⌟ ⌞───────────────────────────────────⌟
+s0 starts  s1 runs (higher    s0 completes execution
+          priority)
 ```
 
 #### Explanation 2
 
-- **Time 0-4:**
+- **Time 0-3:**
 
-    - Low priority process s0 starts execution.
+- Low priority process s0 starts execution at time 1 (after loading in time 0)
+- It runs for 3 time units (slots 1-3)
 
-- **Time 4:**
+- **Time 4-11:**
 
-    - High priority process s1 arrives and preempts s0.
+- High priority process s1 arrives at time 4
+- s1 preempts s0 and runs from time 5-11 (7 time units)
+- s1 completes execution at the end of time 11
 
-- **Time 4-14:**
+- **Time 12-23:**
 
-    - s1 executes for full allocation (5 slots x 2 units).
-
-- **Time 14-16:**
-
-    - s0 returns to finish remaining execution.
-
-- **Time 16:**
-    - All processes have completed execution.
+- s0 returns to finish its remaining execution (12 more time units)
+- s0 completes execution at the end of time 23
 
 ### sched_1 input
 
@@ -220,41 +250,62 @@ s0 starts s1 preempts (higher priority) Completion
 #### Gantt chart 3
 
 ```markdown
-Time: 0 5 10 15 20 25 30 35 40 45  
- ┌────┬────┬────┬────┬────┬────┬────┬────┬────┬────┐
-CPU 0 │s0 │s1 │ Round-robin between │ s0 │
-│ │ │ s1, s2, and s3 (p0) │completes │
-└────┴────┴────────────────────────────┴──────────┘
-↑ ↑ ↑ ↑ ↑
-│ │ │ │ └─ Low priority s0 returns
-│ │ │ └─ s1,s2,s3 finish (time ~35)
-│ │ └─ Round-robin begins among priority 0 processes
-│ └─ s1 preempts s0 (higher priority)
-└─ s0 starts (low priority)
+Time: 0         5         10        15        20        25        30        35        40        45  
+      ┌─────────┬─────────┬─────────┬─────────┬─────────┬─────────┬─────────┬─────────┬─────────┐
+CPU 0 │    s0   │    s1   │         Round-robin scheduling between          │    s0    │         │
+      │         │         │           s1, s2, and s3 (priority 0)           │          │         │
+      └─────────┴─────────┴─────────────────────────────────────────────────┴──────────┴─────────┘
+        ↑         ↑         ↑                   ↑                             ↑          
+        │         │         │                   │                             │          
+        │         │         │                   │                             └─ Low priority s0 returns
+        │         │         │                   │                                and completes (35-46)
+        │         │         │                   │          
+        │         │         │                   └─ High priority processes finish
+        │         │         │                      s1 @ time 24
+        │         │         │                      s2 @ time 34
+        │         │         │                      s3 @ time 35
+        │         │         │          
+        │         │         └─ Round-robin begins among priority 0 processes
+        │         │            Each process gets 2 time units before switching
+        │         │          
+        │         └─ s1 preempts s0 (higher priority)
+        │            Process s2 and s3 arrive at times 6 and 7
+        │          
+        └─ s0 starts execution (low priority)
+           Only process available at system start
 ```
 
 #### Explanation 3
 
-- **Time 0-4:**
+- Time 0-4:
+- Process s0 (priority 4) starts execution
+  - It's the only process available at this time
+  - Executes from time 1-3
 
-    - s0 (priority 4) starts execution.
+- Time 4-8:
+- Process s1 (priority 0) arrives at time 4
+  - Higher priority than s0, so it preempts s0
+  - s1 begins execution at time 5
+- Process s2 (priority 0) arrives at time 6
+  - Same priority as s1, so it's queued behind s1
+- Process s3 (priority 0) arrives at time 7
+  - Same priority as s1 and s2, queued after s2
 
-- **Time 4-8:**
+- Time 8-35:
+- Round-robin scheduling among high-priority processes
+  - Processes s1, s2, and s3 (all priority 0) take turns executing
+  - Each gets exactly 2 time units (the configured time slice)
+  - Processes complete in order:
+    - s1 completes at time 24
+    - s2 completes at time 34
+    - s3 completes at time 35
 
-    - s1 (priority 0) arrives and preempts s0.
+- Time 35-46:
+- Process s0 (priority 4) resumes execution
+  - Low priority process was waiting for all high-priority processes to complete
+  - Executes from time 35-46 to completion
 
-- **Time 6-8:**
-
-    - s2 and s3 (priority 0) both arrive.
-
-- **Time 8-35:**
-
-    - All priority 0 processes execute in rotation.
-
-- **Time 36-46:**
-    - Low priority s0 returns and finishes.
-
-# Paging-based Memory Management
+# Memory Management
 
 - Physical Memory is finite so that Virtual Memory is created to increase task capacity and OS performance.
 - Physical Memory -> frame including RAM & SWAP while Virtual Memory -> page.
@@ -476,6 +527,7 @@ syscall(caller, 17, &regs);
   The function `__sys_ni_syscall` is invoked when a system call number does not match any implemented system call. It logs an error and lists all available system calls.
 
 - **System Call Dispatcher**:  
+
   The `syscall` function is the entry point for handling system calls. It:
     - Sets the `orig_ax` register to the system call number.
     - Uses a `switch` statement to invoke the appropriate system call handler based on the number (`nr`).
@@ -483,11 +535,13 @@ syscall(caller, 17, &regs);
 
 #### 2. **Listing System Calls (`sys_listsyscall.c`)**
 
-- **Purpose**:  
+- **Purpose**:
+
   The `__sys_listsyscall` function allows a process to list all available system calls. It iterates through the `sys_call_table` and prints each entry.
 
 - **Implementation**:
-    ```c
+
+    ```C
     int __sys_listsyscall(struct pcb_t *caller, struct sc_regs* reg) {
         for (int i = 0; i < syscall_table_size; i++)
             printf("%s\n", sys_call_table[i]);
