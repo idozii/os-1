@@ -86,7 +86,7 @@ int __sys_killall(struct pcb_t *caller, struct sc_regs *regs)
                             ready_q->proc[j] = ready_q->proc[j + 1];
                         }
                         ready_q->size--;
-                        // free(proc);
+                        free(proc);
                         terminated_count++;
                     }
                 }
