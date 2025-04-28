@@ -21,10 +21,7 @@ int __sys_killall(struct pcb_t *caller, struct sc_regs *regs)
 {
     char proc_name[100];
     uint32_t data;
-
-    // Hardcode for demo only
     uint32_t memrg = regs->a1;
-
     int i = 0;
     data = 0;
     while (data != -1)
@@ -49,25 +46,17 @@ int __sys_killall(struct pcb_t *caller, struct sc_regs *regs)
 
         if (running->size > 0)
         {
-            // Start from the end to avoid index shifting issues
             for (i = running->size - 1; i >= 0; i--)
             {
                 proc = running->proc[i];
                 if (proc != NULL && strcmp(proc->path, proc_name) == 0)
                 {
-                    printf("Terminating process %s (pid=%d) from running list\n",
-                        proc->path, proc->pid);
-
-                    // Remove the process from the queue
-                    // Shift remaining elements
                     int j;
                     for (j = i; j < running->size - 1; j++)
                     {
                         running->proc[j] = running->proc[j + 1];
                     }
                     running->size--;
-
-                    // Free process resources
                     // free(proc);
 
                     terminated_count++;
@@ -76,6 +65,7 @@ int __sys_killall(struct pcb_t *caller, struct sc_regs *regs)
         }
     }
 #ifdef MLQ_SCHED
+    // MLQ scheduler has multiple priority queues
     if (caller->mlq_ready_queue != NULL)
     {
         for (int prio = 0; prio < MAX_PRIO; prio++)
@@ -89,9 +79,6 @@ int __sys_killall(struct pcb_t *caller, struct sc_regs *regs)
                     proc = ready_q->proc[i];
                     if (proc != NULL && strcmp(proc->path, proc_name) == 0)
                     {
-                        printf("Terminating process %s (pid=%d) from ready queue (prio=%d)\n",
-                            proc->path, proc->pid, prio);
-
                         // Remove the process from the queue
                         int j;
                         for (j = i; j < ready_q->size - 1; j++)
@@ -99,10 +86,7 @@ int __sys_killall(struct pcb_t *caller, struct sc_regs *regs)
                             ready_q->proc[j] = ready_q->proc[j + 1];
                         }
                         ready_q->size--;
-
-                        // Free process resources
                         // free(proc);
-
                         terminated_count++;
                     }
                 }
@@ -110,28 +94,26 @@ int __sys_killall(struct pcb_t *caller, struct sc_regs *regs)
         }
     }
 #else
+    // Single ready queue
     if (caller->ready_queue != NULL)
     {
         struct queue_t *ready_q = caller->ready_queue;
         if (ready_q->size > 0)
         {
+            // Iterate backwards for safe removal
             for (i = ready_q->size - 1; i >= 0; i--)
             {
                 proc = ready_q->proc[i];
                 if (proc != NULL && strcmp(proc->path, proc_name) == 0)
                 {
-                    printf("Terminating process %s (pid=%d) from ready queue\n",
-                        proc->path, proc->pid);
-
+                    // Remove the process from the queue
                     int j;
                     for (j = i; j < ready_q->size - 1; j++)
                     {
                         ready_q->proc[j] = ready_q->proc[j + 1];
                     }
                     ready_q->size--;
-
                     free(proc);
-
                     terminated_count++;
                 }
             }
